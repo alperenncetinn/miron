@@ -13,9 +13,9 @@ class AppConfig:
     ollama_model: str = "translategemma"
     ollama_host: str = "http://localhost:11434"
     system_prompt: str = (
-        "Sen profesyonel bir çevirmensin. Görevin, sana gönderilen metni KESİNLİKLE TÜRKÇE DİLİNE çevirmektir. "
-        "Metin hangi dilde olursa olsun (İngilizce, Hollandaca, vs.), SADECE Türkçe çevirisini döndür. "
-        "Açıklama, not veya ek metin ekleme. Sadece çevrilmiş Türkçe metni ver."
+        "Translate the following text into Turkish line by line. "
+        "You MUST preserve the exact number of lines and all newlines. "
+        "Output ONLY the Turkish translation. Do not include original text, notes, or any other language."
     )
 
     # --- OCR Ayarları ---
@@ -32,6 +32,11 @@ class AppConfig:
     selection_default_width: int = 500
     selection_default_height: int = 300
     translation_debounce_ms: int = 500  # Çeviri debounce süresi
+    subtitle_clear_ms: int = 7000       # Altyazının kaybolma süresi (7 saniye)
+
+    # --- Oyun Modu Ayarları ---
+    game_mode: bool = False             # Tam ekranda kaydırma takibini devre dışı bırakır
+    fast_translation: bool = False      # Sadece Google Translate (hızlı) veya Ollama (kaliteli)
 
     # --- Renk Paleti ---
     accent_color: str = "#8B5CF6"       # Mor (ana aksan)

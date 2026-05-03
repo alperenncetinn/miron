@@ -5,7 +5,10 @@ from __future__ import annotations
 from enum import IntEnum, auto
 
 from PySide6.QtCore import Qt, Signal, QRect, QPoint, QSize, QTimer
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QLinearGradient
+from PySide6.QtGui import (
+    QPainter, QColor, QPen, QBrush, QFont, QLinearGradient,
+    QImage, QPixmap, QPainterPath,
+)
 from PySide6.QtWidgets import QWidget, QApplication
 
 from .config import config
@@ -59,6 +62,9 @@ class SelectionWindow(QWidget):
         self._drag_start_geo = QRect()
         self._cached_window_id: int | None = None
 
+        self._is_fullscreen = False
+        self._normal_geo = QRect()
+
         # Pencere ayarları
         self.setObjectName("SelectionWindow")
         self.setWindowFlags(
@@ -74,7 +80,15 @@ class SelectionWindow(QWidget):
 
         # Durum ve Çeviri Metinleri
         self._current_status = "Bekliyor"
-        self._translation_text = ""
+        self._blocks = []
+        self._translated_lines = []
+        self._is_fallback = False
+        
+        self._scroll_x = 0.0
+        self._scroll_y = 0.0
+
+        # Blur arka plan için yakalanan ekran görüntüsü
+        self._blurred_bg: QPixmap | None = None
 
         # Varsayılan boyut ve konum — ekranın ortası
         screen = QApplication.primaryScreen()
@@ -110,92 +124,198 @@ class SelectionWindow(QWidget):
     # --- Boyama ---
 
     def paintEvent(self, event):
-        """Seçim çerçevesini çizer."""
+        """Seçim çerçevesini çizer — blur arka plan + çeviri metni overlay."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
         w, h = self.width(), self.height()
         radius = 12
 
-        # Yarı-şeffaf arka plan dolgusu
-        if self._is_scanning:
-            # Taranırken hafif mavi-mor glow
+        # Clipping path — rounded rect
+        clip_path = QPainterPath()
+        clip_path.addRoundedRect(0, 0, w, h, radius, radius)
+        painter.setClipPath(clip_path)
+
+        if self._is_scanning and self._blocks and self._translated_lines:
+            # --- ÇEVİRİ MODU ---
+            # Arka plan tamamen şeffaf (kullanıcı oyunu görebilsin)
+
+            # Blokları orijinal konumlarında çiz
+            for i, block in enumerate(self._blocks):
+                # Çeviri satırı var mı kontrol et (Ollama satır sayısını bozmuş olabilir)
+                trans_text = self._translated_lines[i] if i < len(self._translated_lines) else ""
+                if not trans_text:
+                    continue
+
+                # Kaydırma offsetlerini ekle
+                bx = int(block.x + self._scroll_x)
+                by = int(block.y + self._scroll_y)
+
+                # Metni çiz
+                font = QFont("Helvetica Neue")
+                # Font boyutunu bloğun yüksekliğine göre ayarla
+                font.setPixelSize(max(10, int(block.height * 0.75)))
+                font.setWeight(QFont.Weight.Bold)
+                painter.setFont(font)
+                
+                # Gerçekte kaplayacağı alanı bul (kelime kaydırma yapıldığında)
+                base_rect = QRect(bx, by, int(block.width), int(block.height))
+                flags = Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap
+                fm = painter.fontMetrics()
+                bounding_rect = fm.boundingRect(base_rect, flags, trans_text)
+                
+                # Gerekli yüksekliği ayarla (orijinalden büyükse büyüt)
+                text_h = max(int(block.height), bounding_rect.height())
+                draw_rect = QRect(bx, by, int(block.width), text_h)
+
+                # Arka plan
+                bg_rect = QRect(draw_rect)
+                bg_rect.adjust(-6, -4, 6, 4) # Sağdan/soldan biraz daha pay verelim
+                
+                painter.setBrush(QBrush(QColor(0, 0, 0, 180)))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(bg_rect, 4, 4)
+                
+                # Metin gölgesi
+                painter.setPen(QColor(0, 0, 0, 200))
+                shadow_rect = draw_rect.translated(1, 1)
+                painter.drawText(shadow_rect, flags, trans_text)
+                
+                # Metin
+                painter.setPen(QColor(255, 255, 255, 255))
+                painter.drawText(draw_rect, flags, trans_text)
+
+            # Durum metni (sol üst)
+            status_font = QFont("Helvetica Neue", 10)
+            status_font.setWeight(QFont.Weight.Medium)
+            painter.setFont(status_font)
+            painter.setPen(QColor(255, 255, 255, 180))
+            painter.drawText(10, 18, self._current_status)
+
+            # Fallback rozeti (sağ üst)
+            if self._is_fallback:
+                badge_font = QFont("Helvetica Neue", 9)
+                badge_font.setWeight(QFont.Weight.Bold)
+                painter.setFont(badge_font)
+                badge_text = "⚡ Fallback"
+                fm = painter.fontMetrics()
+                badge_w = fm.horizontalAdvance(badge_text) + 14
+                badge_h = fm.height() + 6
+                badge_x = w - badge_w - 8
+                badge_y = 6
+                painter.setBrush(QBrush(QColor(245, 158, 11, 200)))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 6, 6)
+                painter.setPen(QColor(0, 0, 0, 230))
+                painter.drawText(
+                    QRect(badge_x, badge_y, badge_w, badge_h),
+                    Qt.AlignmentFlag.AlignCenter,
+                    badge_text,
+                )
+
+        elif self._is_scanning:
+            # --- TARAMA MODU (henüz çeviri yok) ---
             alpha = int(12 + 8 * self._pulse_value)
-            bg_color = QColor(139, 92, 246, alpha)
+            painter.setBrush(QBrush(QColor(139, 92, 246, alpha)))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRect(0, 0, w, h)
+
+            status_font = QFont("Helvetica Neue", 11)
+            status_font.setWeight(QFont.Weight.Medium)
+            painter.setFont(status_font)
+            painter.setPen(QColor(255, 255, 255, 200))
+            painter.drawText(15, 20, self._current_status)
+
         else:
-            bg_color = QColor(139, 92, 246, 8)
+            # --- BEKLEME MODU ---
+            painter.setBrush(QBrush(QColor(139, 92, 246, 8)))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRect(0, 0, w, h)
 
-        painter.setBrush(QBrush(bg_color))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(0, 0, w, h, radius, radius)
+            text_color = QColor(148, 163, 184, 160)
+            font = QFont("Helvetica Neue", 24)
+            font.setWeight(QFont.Weight.Bold)
+            painter.setFont(font)
+            painter.setPen(text_color)
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                             "Çevirmek için çift tıklayın\nTam ekran için 'F' tuşuna basın")
 
-        # Kenarlık — gradient efekti
+        # Clipping'i kaldır, kenarlık ve tutamaçları üzerine çiz
+        painter.setClipping(False)
+
+        # Kenarlık
         border_pen = QPen()
         border_pen.setWidth(2)
-
         if self._is_scanning:
-            # Taranırken animasyonlu parlak kenarlık
             glow_alpha = int(120 + 100 * self._pulse_value)
             border_pen.setColor(QColor(139, 92, 246, glow_alpha))
         else:
             border_pen.setColor(QColor(139, 92, 246, 80))
-
         painter.setPen(border_pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRoundedRect(1, 1, w - 2, h - 2, radius, radius)
 
         # Köşe tutamaçları
         handle_size = 10
-        handle_color = QColor(139, 92, 246, 200) if self._is_scanning else QColor(139, 92, 246, 120)
-        painter.setBrush(QBrush(handle_color))
+        hc = QColor(139, 92, 246, 200) if self._is_scanning else QColor(139, 92, 246, 120)
+        painter.setBrush(QBrush(hc))
         painter.setPen(Qt.PenStyle.NoPen)
-
-        corners = [
-            (2, 2),                   # Sol üst
-            (w - handle_size - 2, 2), # Sağ üst
-            (2, h - handle_size - 2), # Sol alt
-            (w - handle_size - 2, h - handle_size - 2),  # Sağ alt
-        ]
-        for cx, cy in corners:
+        for cx, cy in [(2, 2), (w - 12, 2), (2, h - 12), (w - 12, h - 12)]:
             painter.drawRoundedRect(cx, cy, handle_size, handle_size, 3, 3)
-
-        # Merkez bilgi metni veya Çeviri Metni
-        font = QFont("Helvetica Neue", 12)
-        font.setWeight(QFont.Weight.Bold)
-        painter.setFont(font)
-
-        if self._is_scanning:
-            if self._translation_text:
-                # Tüm pencereyi (seçim alanını) yarı şeffaf siyahla kapla
-                painter.setBrush(QBrush(QColor(0, 0, 0, 190)))
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.drawRoundedRect(0, 0, w, h, radius, radius)
-                
-                # Metni çiz (tam ortaya hizala)
-                text_flags = Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap
-                text_rect = QRect(20, 20, w - 40, h - 40)
-                
-                painter.setPen(QColor(255, 255, 255, 255))
-                painter.drawText(text_rect, text_flags, self._translation_text)
-                
-            # Durum metni çizimi (sol üste ufak)
-            status_font = QFont("Helvetica Neue", 10)
-            status_font.setWeight(QFont.Weight.Medium)
-            painter.setFont(status_font)
-            painter.setPen(QColor(255, 255, 255, 200))
-            painter.drawText(15, 20, self._current_status)
-        else:
-            text_color = QColor(148, 163, 184, 160)
-            painter.setPen(text_color)
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Çevirmek için çift tıklayın")
 
         painter.end()
 
     # --- API ---
-    def set_translation(self, text: str):
-        """Çeviri metnini günceller ve pencereyi yeniden çizer."""
-        self._translation_text = text
+    def set_translation_blocks(self, blocks: list, translated_lines: list, is_fallback: bool = False):
+        """Çeviri metnini günceller ve pencereyi yeniden çizer.
+
+        Args:
+            blocks: Orijinal metin blokları.
+            translated_lines: Çeviri satırları.
+            is_fallback: True ise Google Translate fallback kullanıldı.
+        """
+        self._blocks = blocks
+        self._translated_lines = translated_lines
+        self._is_fallback = is_fallback
+        self._scroll_x = 0.0
+        self._scroll_y = 0.0
         self.update()
+
+    def set_scroll_offset(self, dx: float, dy: float):
+        """Kaydırma offsetini günceller."""
+        if abs(self._scroll_x - dx) > 0.5 or abs(self._scroll_y - dy) > 0.5:
+            self._scroll_x = dx
+            self._scroll_y = dy
+            self.update()
+
+    def set_background_capture(self, qimage: QImage):
+        """OCR sırasında yakalanan ekran görüntüsünü blur arka plan olarak ayarlar.
+
+        Gaussian blur uygulanarak saklanır ve paintEvent'te arka plan olarak çizilir.
+
+        Args:
+            qimage: Yakalanan ekran bölgesinin QImage nesnesi.
+        """
+        try:
+            # Performans için küçült, sonra bulanıklaştır
+            # Küçük boyuta ölçekle → tekrar büyüt = doğal Gaussian blur etkisi
+            small = qimage.scaled(
+                max(1, qimage.width() // 8),
+                max(1, qimage.height() // 8),
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            # Tekrar orijinal boyuta büyüt (bulanık efekt)
+            blurred = small.scaled(
+                qimage.width(),
+                qimage.height(),
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self._blurred_bg = QPixmap.fromImage(blurred)
+        except Exception:
+            self._blurred_bg = None
 
     def set_status(self, status: str):
         """Durum metnini günceller ve pencereyi yeniden çizer."""
@@ -229,9 +349,14 @@ class SelectionWindow(QWidget):
     def mouseDoubleClickEvent(self, event):
         """Çift tıklama ile taramayı başlat/durdur."""
         if event.button() == Qt.MouseButton.LeftButton:
-            self._is_scanning = not self._is_scanning
-            self.scanning_toggled.emit(self._is_scanning)
-            self.update()
+            self.toggle_scanning()
+
+    def toggle_scanning(self):
+        """Taramayı başlatır veya durdurur. Tray ikon veya kısayol ile çağrılabilir."""
+        self._is_scanning = not self._is_scanning
+        self.scanning_toggled.emit(self._is_scanning)
+        self.update()
+        self._enable_fullscreen_overlay()
 
     def mousePressEvent(self, event):
         """Mouse basma — sürükleme veya boyutlandırma başlat."""
@@ -269,6 +394,35 @@ class SelectionWindow(QWidget):
             self.region_changed.emit(self.geometry())
             # Pencere taşındığında cache'i temizle (bir sonraki lookup doğru eşleşsin)
             self._cached_window_id = None
+
+    def keyPressEvent(self, event):
+        """Klavye kısayolları."""
+        if event.key() == Qt.Key.Key_F:
+            self._toggle_fullscreen()
+        elif event.key() == Qt.Key.Key_Escape and self._is_fullscreen:
+            self._toggle_fullscreen()
+        super().keyPressEvent(event)
+
+    def _toggle_fullscreen(self):
+        """Tam ekran modunu açar/kapatır."""
+        screen = QApplication.primaryScreen()
+        if not screen:
+            return
+
+        if self._is_fullscreen:
+            # Normal boyuta dön
+            if not self._normal_geo.isEmpty():
+                self.setGeometry(self._normal_geo)
+            self._is_fullscreen = False
+        else:
+            # Tam ekran yap
+            self._normal_geo = self.geometry()
+            self.setGeometry(screen.geometry())
+            self._is_fullscreen = True
+        
+        self.region_changed.emit(self.geometry())
+        self._cached_window_id = None
+        self.update()
 
     # --- Kenar algılama ---
 
@@ -382,6 +536,9 @@ class SelectionWindow(QWidget):
                 # Çok yüksek bir Z-index (Oyunların ve tam ekranların üzerinde)
                 # 2000 = NSScreenSaverWindowLevel
                 ns_window.setLevel_(2000)
+
+                # Arka plana dokunabilmek için fare olaylarını yok say (Eğer taranıyorsa)
+                ns_window.setIgnoresMouseEvents_(self._is_scanning)
         except Exception as e:
             print(f"[Miron] Tam ekran overlay aktif edilemedi: {e}")
 

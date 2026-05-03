@@ -14,11 +14,12 @@ Oyun oynarken, video izlerken veya yabancı dildeki bir belgeyi okurken; Miron'u
 
 ## ✨ Özellikler
 
-*   **Native macOS OCR (Apple Vision):** Apple'ın kendi donanım hızlandırmalı Vision Framework'ü sayesinde çok hızlı ve hatasız metin okuma.
-*   **Ollama ile Yerel Çeviri:** Verileriniz asla internete gitmez. Ollama üzerinden yerel olarak çalışan `translategemma` modeli ile bağlama uygun, doğal Türkçe çeviri.
-*   **Akıllı UI (Glassmorphism):** Seçtiğiniz alanın üzerini karartarak orijinal metni hafifçe gizler ve yerine sinematik bir altyazı gibi Türkçe çeviriyi yerleştirir.
-*   **Geri Bildirim Döngüsü Koruması:** Miron, kendi çizdiği çeviri metnini OCR aşamasında görmezden gelerek sonsuz döngüleri (feedback loop) engeller.
-*   **Asenkron ve Performanslı:** PySide6 (Qt) ve `asyncio` kullanılarak tasarlandı. Çeviri arka planda yapılırken arayüz asla donmaz.
+*   **Native macOS OCR (Apple Vision):** Apple'ın kendi donanım hızlandırmalı Vision Framework'ü sayesinde çok hızlı ve hatasız metin okuma. Pikselleri Retina ekran (points) ölçeklerine göre milimetrik hizalar.
+*   **Donanım Hızlandırmalı Kaydırma Takibi (Optical Flow):** Oyun oynarken sayfayı veya kamerayı kaydırdığınızda, OCR işlemini beklemeden çeviri kutuları 25 FPS (40ms) hızla anlık olarak metinle birlikte kayar (`VNTranslationalImageRegistrationRequest`).
+*   **Ollama ile Yerel veya Google ile Hızlı Çeviri:** İster Ollama üzerinden internete bağlanmadan gizlilik odaklı kaliteli çeviri, isterseniz de tek tıkla **Google Translate** tabanlı deterministik "Hızlı Çeviri" (anlık) moduna geçiş imkanı.
+*   **Akıllı UI:** Orijinal metnin tam üzerine, sinematik bir altyazı gibi Türkçe çeviriyi yerleştirir. Arka planı tamamen şeffaf bıraktığı ve fare tıklamalarını yoksaydığı için oyunu oynamaya veya bilgisayarı kullanmaya engelsiz devam edebilirsiniz. Uzun süre yazı bulunmazsa 7 saniye içerisinde ekrandan otomatik kaybolur.
+*   **Sistem Çubuğu (System Tray) Kontrolü:** Kapatma, "Oyun Modu"na geçiş veya "Hızlı Çeviri" gibi ayarları sağ üst köşedeki "M" ikonundan saniyeler içinde değiştirebilirsiniz.
+*   **Geri Bildirim Döngüsü Koruması:** Miron, kendi çizdiği çeviri metnini OCR aşamasında görmezden gelerek sonsuz döngüleri engeller.
 
 ## 🛠 Kurulum
 
@@ -55,11 +56,11 @@ Projeyi başlatmak için sağlanan shell betiğini çalıştırabilirsiniz:
 ```
 
 **Nasıl Kullanılır?**
-1. Ekranda beliren mor çerçeveyi, çevirmek istediğiniz metnin (örneğin bir oyun altyazısı) üzerine sürükleyip boyutlandırın.
-2. Çerçevenin içine **çift tıklayın**.
-3. Sol üstte minik bir "⟳ Taranıyor..." ve ardından "◉ Çevriliyor..." yazısı belirecek.
-4. Çeviri tamamlandığında arka plan hafifçe kararır ve Türkçe metin çerçevenin tam ortasına yansıtılır!
-5. Taramayı durdurmak için çerçeveye tekrar çift tıklayabilirsiniz.
+1. Ekranda beliren mor çerçeveyi, çevirmek istediğiniz metnin (örneğin bir oyun altyazısı) üzerine sürükleyip boyutlandırın. "F" tuşuna basarak tam ekran yapabilirsiniz.
+2. Çerçevenin içine **çift tıklayın** veya sağ üstteki **Menü Çubuğu (System Tray) ikonundan "Taramayı Başlat"** seçeneğine tıklayın.
+3. Çeviri modundayken pencere hayalet (click-through) moda geçer, yani pencerenin arkasına, oyununuza rahatça tıklamaya devam edebilirsiniz.
+4. Çeviri tamamlandığında arka plan tamamen şeffaf şekilde Türkçe metin orijinalinin tam üzerine yansıtılır!
+5. Taramayı durdurmak, **Oyun Modu'nu** (Kaydırma takibi olmadan tam ekran çeviri) veya **Hızlı Çeviri'yi** etkinleştirmek için sağ üst köşedeki **M (Miron) ikonuna** tıklayabilirsiniz. Çıkış işlemini de yine buradan yapmalısınız.
 
 ## ⚙️ Yapılandırma (`config.py`)
 

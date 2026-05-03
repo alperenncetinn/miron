@@ -4,11 +4,12 @@ import sys
 import signal
 import logging
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtGui import QFont, QFontDatabase, QIcon, QPixmap, QPainter, QColor
 
 from .overlay import OverlayController
+from .config import config
 
 
 def main():
@@ -51,18 +52,69 @@ def main():
     controller.start()
 
     # --- Graceful Shutdown ---
-    # Ctrl+C ile temiz kapatma
-    def handle_sigint(*args):
+    # Ctrl+C veya Tray üzerinden temiz kapatma
+    def quit_app(*args):
         print("\n[Miron] Kapatılıyor...")
         controller.stop()
         app.quit()
 
-    signal.signal(signal.SIGINT, handle_sigint)
+    signal.signal(signal.SIGINT, quit_app)
 
     # SIGINT'in Qt event loop tarafından yakalanması için timer
     signal_timer = QTimer()
     signal_timer.start(200)
     signal_timer.timeout.connect(lambda: None)
+
+    # --- System Tray ---
+    # Basit bir ikon oluştur
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setBrush(QColor(139, 92, 246)) # Mor renk
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawEllipse(4, 4, 24, 24)
+    painter.setPen(Qt.GlobalColor.white)
+    font = painter.font()
+    font.setPixelSize(16)
+    font.setBold(True)
+    painter.setFont(font)
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "M")
+    painter.end()
+
+    tray_icon = QSystemTrayIcon(QIcon(pixmap), app)
+    
+    tray_menu = QMenu()
+    toggle_action = tray_menu.addAction("Taramayı Başlat / Durdur")
+    toggle_action.triggered.connect(controller.toggle_scanning)
+    
+    tray_menu.addSeparator()
+    
+    # Oyun Modu
+    game_mode_action = tray_menu.addAction("Oyun Modu (Hızlı Kaydırma Kapalı)")
+    game_mode_action.setCheckable(True)
+    game_mode_action.setChecked(config.game_mode)
+    def toggle_game_mode(checked):
+        from .config import config
+        config.game_mode = checked
+    game_mode_action.toggled.connect(toggle_game_mode)
+    
+    # Hızlı Çeviri Modu
+    fast_trans_action = tray_menu.addAction("Hızlı Çeviri (Google Translate)")
+    fast_trans_action.setCheckable(True)
+    fast_trans_action.setChecked(config.fast_translation)
+    def toggle_fast_trans(checked):
+        from .config import config
+        config.fast_translation = checked
+    fast_trans_action.toggled.connect(toggle_fast_trans)
+
+    tray_menu.addSeparator()
+    
+    quit_action = tray_menu.addAction("Çıkış")
+    quit_action.triggered.connect(quit_app)
+    
+    tray_icon.setContextMenu(tray_menu)
+    tray_icon.show()
 
     # --- Event loop ---
     sys.exit(app.exec())
